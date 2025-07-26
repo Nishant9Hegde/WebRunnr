@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- These headers are required for the Python environment (Pyodide) to work correctly. -->
+    <meta http-equiv="Cross-Origin-Opener-Policy" content="same-origin">
+    <meta http-equiv="Cross-Origin-Embedder-Policy" content="require-corp">
+    <title>Simple Python Executor</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* A simple, clean scrollbar for the console */
+        .output-console::-webkit-scrollbar { width: 6px; }
+        .output-console::-webkit-scrollbar-track { background: #1f2937; }
+        .output-console::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 3px; }
+        
+        /* Style for the dropdown */
+        select {
+            background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
+            background-position: right 0.5rem center;
+            background-repeat: no-repeat;
+            background-size: 1.5em 1.5em;
+            padding-right: 2.5rem;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            appearance: none;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-200 font-sans flex items-center justify-center min-h-screen">
+
+    <main class="container mx-auto max-w-2xl w-full p-4">
+        
+        <!-- Header -->
+        <header class="text-center mb-6">
+            <h1 class="text-4xl font-bold text-cyan-400">Python Pad</h1>
+            <p class="text-gray-400 mt-1">A simple space to run Python code in your browser.</p>
+        </header>
+
+        <!-- Load Example Dropdown -->
+        <div class="mb-2">
+            <label for="testCaseSelector" class="block mb-1 text-xs font-medium text-gray-400">Load Example</label>
+            <select id="testCaseSelector" onchange="loadTestCase()" class="w-full bg-gray-800 border border-gray-700 text-gray-200 text-sm rounded-lg focus:ring-cyan-500 focus:border-cyan-500 block p-2.5">
+                <option value="1">1. Simple Greeting</option>
+                <option value="2">2. Math with Inputs</option>
+                <option value="3">3. Input in Loop</option>
+                <option value="4">4. No Input (Math)</option>
+            </select>
+        </div>
+
+        <!-- Code Editor -->
+        <div class="mb-4">
+            <label for="codeInput" class="block mt-4 mb-2 text-sm font-medium text-gray-400">Custom Code Editor</label>
+            <textarea id="codeInput" class="w-full h-48 p-3 bg-gray-800 border border-gray-700 rounded-lg font-mono text-sm focus:ring-2 focus:ring-cyan-500 focus:outline-none" placeholder="Enter your Python code here..."></textarea>
+        </div>
+
+        <!-- Controls -->
+        <div class="flex items-center gap-4 mb-6">
+            <button onclick="runUserCode()" class="w-full bg-cyan-600 hover:bg-cyan-700 text-white font-bold py-2 px-5 rounded-lg transition-colors">
+                ▶️ Run
+            </button>
+            <button onclick="clearAll()" class="w-full bg-gray-600 hover:bg-gray-700 text-white font-bold py-2 px-5 rounded-lg transition-colors">
+                Clear
+            </button>
+        </div>
+
+        <!-- Output Console -->
+        <div>
+            <div class="flex justify-between items-center mb-2">
+                <label class="text-sm font-medium text-gray-400">Console Output</label>
+                <span id="status-text" class="text-xs text-gray-500 px-2 py-1 rounded-full bg-gray-800">Initializing...</span>
+            </div>
+            <div id="output" class="output-console w-full h-56 bg-gray-800 border border-gray-700 rounded-lg p-3 font-mono text-sm whitespace-pre-wrap overflow-y-auto"></div>
+        </div>
+        
+        <p class="text-center mt-4 text-xs text-gray-500">Note: `input()` will open a browser prompt.</p>
+
+    </main>
+
+    <script type="module">
+        let pythonWorker = null;
+        let isWorkerReady = false;
+
+        const codeInput = document.getElementById('codeInput');
+        const outputDiv = document.getElementById('output');
+        const statusText = document.getElementById('status-text');
+        const testCaseSelector = document.getElementById('testCaseSelector');
+
+        const testCases = {
+            1: `print("Hello, world!")\nname = input("What's your name? ")\nprint(f"Hi, {name}!")`,
+            2: `num1 = int(input("Enter first number: "))\nnum2 = int(input("Enter second number: "))\nprint(f"Result: {num1} + {num2} = {num1 + num2}")`,
+            3: `total = 0\nfor i in range(3):\n    num = int(input(f"Enter number {i+1}: "))\n    total += num\nprint(f"Total sum: {total}")`,
+            4: `import math\n\nprint("Calculating square roots...")\nfor i in range(5):\n    print(f"√{i} = {math.sqrt(i) if i > 0 else 0:.2f}")`
+        };
+
+        // Initialize the Web Worker that runs the Python code.
+        function initializeWorker() {
+            if (pythonWorker) {
+                pythonWorker.terminate();
+            }
+            pythonWorker = new Worker('./packages/py-executor/dist/index.js', { type: 'module' });
+            isWorkerReady = false;
+            updateStatus('Initializing...', 'waiting');
+            outputDiv.innerHTML = 'Python worker is starting...';
+
+            // Listen for messages from the worker
+            pythonWorker.onmessage = (event) => {
+                const { type, data, prompt } = event.data;
+
+                switch (type) {
+                    case 'ready':
+                        isWorkerReady = true;
+                        outputDiv.innerHTML += '\n✅ Worker Ready. You can run code now.';
+                        updateStatus('Ready', 'ready');
+                        break;
+                    case 'stdout':
+                        outputDiv.innerHTML += data;
+                        break;
+                    case 'stderr':
+                        outputDiv.innerHTML += `<span style="color: #fca5a5;">${data}</span>`;
+                        break;
+                    case 'error':
+                        outputDiv.innerHTML += `\n<span style="color: #ef4444;">EXECUTION ERROR: ${data}</span>`;
+                        updateStatus('Ready', 'ready');
+                        break;
+                    case 'done':
+                        outputDiv.innerHTML += '\n<span style="color: #4ade80;">--- Done ---</span>';
+                        updateStatus('Ready', 'ready');
+                        break;
+                    case 'input_request':
+                        updateStatus('Waiting for input...', 'running');
+                        const userInput = window.prompt(prompt);
+                        pythonWorker.postMessage({ type: 'input_response', value: userInput });
+                        outputDiv.innerHTML += `<span style="color: #60a5fa;">\n&gt; User entered: ${userInput || ''}</span>\n`;
+                        updateStatus('Running...', 'running');
+                        break;
+                    default:
+                        console.log('Unknown message from worker:', event.data);
+                }
+                outputDiv.scrollTop = outputDiv.scrollHeight;
+            };
+
+            pythonWorker.onerror = (error) => {
+                outputDiv.innerHTML += `\n<span style="color: #ef4444;">WORKER ERROR: ${error.message}</span>`;
+                updateStatus('Error', 'error');
+                console.error("Worker error:", error);
+            };
+        }
+
+        // Updates the status indicator in the UI.
+        function updateStatus(text, state) {
+            statusText.textContent = text;
+            statusText.classList.remove('text-gray-500', 'text-green-400', 'text-blue-400', 'text-red-400');
+            switch(state) {
+                case 'ready': statusText.classList.add('text-green-400'); break;
+                case 'running': statusText.classList.add('text-blue-400'); break;
+                case 'error': statusText.classList.add('text-red-400'); break;
+                default: statusText.classList.add('text-gray-500'); break;
+            }
+        }
+
+        // --- Global Functions ---
+        
+        // Loads the selected test case into the editor
+        window.loadTestCase = () => {
+            const selectedValue = testCaseSelector.value;
+            if (testCases[selectedValue]) {
+                codeInput.value = testCases[selectedValue];
+            }
+        };
+
+        // Function called by the 'Run' button.
+        window.runUserCode = () => {
+            const code = codeInput.value;
+            if (!isWorkerReady) {
+                outputDiv.innerHTML += '\n<span style="color: #facc15;">⚠️ Worker not ready yet...</span>';
+                return;
+            }
+            if (!code.trim()) {
+                outputDiv.innerHTML += '\n<span style="color: #facc15;">⚠️ Code is empty.</span>';
+                return;
+            }
+
+            updateStatus('Running...', 'running');
+            outputDiv.innerHTML = `<span style="color: #2dd4bf;">--- Running Code ---</span>\n`;
+            pythonWorker.postMessage({ code });
+        };
+
+        // Clears both the editor and the output console.
+        window.clearAll = () => {
+            codeInput.value = '';
+            outputDiv.innerHTML = '';
+        };
+
+        // Initialize the worker and load the first test case by default.
+        initializeWorker();
+        loadTestCase();
+    </script>
+</body>
+</html>
